@@ -5,14 +5,16 @@ use crate::structs::*;
 use crate::readmap::*;
 
 pub struct RRTPlanner {
-    pub start: Point,
-    pub goal: Point,
-    pub map: OccupancyMap,
-    pub step_size: f64,
-    pub goal_radius: f64,
-    pub max_iter: u32,
-    pub num_collision_check_steps: i32,
-    pub tree: RRTTree,
+    start: Point,
+    goal: Point,
+    map: OccupancyMap,
+    step_size: f64,
+    goal_radius: f64,
+    max_iter: u32,
+    num_collision_check_steps: i32,
+    
+    tree: RRTTree,
+    path_found: Option<Vec<Point>>,
 }
 
 impl RRTPlanner {
@@ -26,6 +28,40 @@ impl RRTPlanner {
             max_iter,
             num_collision_check_steps,
             tree: RRTTree::new(start),
+            path_found: None,
+        }
+    }
+
+     // Salva todos os nós da árvore em um arquivo CSV
+    pub fn save_all_nodes_to_csv(&self, filename: &str) -> Result<(), std::io::Error> {
+        use std::io::Write; 
+        let mut file = std::fs::File::create(filename)?;
+        writeln!(file, "x,y,parent_x,parent_y")?;
+
+        for (i, node) in self.tree.nodes().iter().enumerate() {
+            let parent_coords = if let Some(parent_idx) = node.parent_idx {
+                let parent_node = self.tree.get_node(parent_idx).unwrap();
+                format!("{:.2},{:.2}", parent_node.coord.x, parent_node.coord.y)
+            } else {
+                "NaN,NaN".to_string() 
+            };
+            writeln!(file, "{:.2},{:.2},{}", node.coord.x, node.coord.y, parent_coords)?;
+        }
+        Ok(())
+    }
+
+    // Salva o caminho final em um arquivo CSV
+    pub fn save_final_path_to_csv(&self, filename: &str) -> Result<(), std::io::Error> {
+        use std::io::Write;
+        if let Some(path) = &self.path_found {
+            let mut file = std::fs::File::create(filename)?;
+            writeln!(file, "x,y")?;
+            for point in path {
+                writeln!(file, "{:.2},{:.2}", point.x, point.y)?;
+            }
+            Ok(())
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Nenhum caminho final para salvar."))
         }
     }
 
@@ -55,7 +91,7 @@ impl RRTPlanner {
         }
     }
 
-    pub fn RRT(&mut self) -> Option<Vec<Point>> {
+    pub fn RRT(&mut self) -> Option<&Vec<Point>> {
         for _ in 0..self.max_iter {
             let q_rand = self.random_point();
             let nearest_node_idx = self.tree.nearest_node_idx(&q_rand);
@@ -71,7 +107,8 @@ impl RRTPlanner {
                     if path.last().map_or(false, |p| p != &self.goal) {
                         path.push(self.goal);
                     }
-                    return Some(path);
+                    self.path_found = Some(path);
+                    return self.path_found.as_ref();
                 }
             }
         }

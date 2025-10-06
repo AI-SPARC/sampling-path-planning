@@ -19,11 +19,24 @@ fn main() {
 
     let mut planner = RRTPlanner::new( start_point, goal_point, map, step_size, goal_radius, max_iterations, num_collision_check_steps);
 
+    println!("Iniciando planejamento RRT...");
     if let Some(path) = planner.RRT() {
         println!("\nCaminho encontrado com {} pontos:", path.len());
         for point in path {
             println!("  ({:.2}, {:.2})", point.x, point.y); 
         }
+        if let Err(e) = planner.save_all_nodes_to_csv("data/rrt_nodes.csv") {
+            eprintln!("Erro ao salvar nós: {}", e);
+        } else {
+            println!("Nós da árvore salvos em rrt_nodes.csv");
+        }
+
+        if let Err(e) = planner.save_final_path_to_csv("data/rrt_path.csv") {
+            eprintln!("Erro ao salvar caminho: {}", e);
+        } else {
+            println!("Caminho final salvo em rrt_path.csv");
+        }
+
     } else {
         println!("Não foi possível encontrar um caminho.");
     }
