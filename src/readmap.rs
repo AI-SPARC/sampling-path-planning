@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::structs::*;
 pub use image::{ImageBuffer, Rgb};
 
-
 pub fn is_black(pixel: &Rgb<u8>) -> bool {
     let threshold = 50;
     pixel[0] < threshold && pixel[1] < threshold && pixel[2] < threshold

@@ -1,43 +1,35 @@
-mod structs;
-mod readmap;
-mod rrt;
+mod structs3d;
+mod readmap3d;
+mod rrt3d;
+mod readmap; 
+mod structs; 
 
-use crate::structs::*;
-use crate::readmap::*;
-use crate::rrt::*;
+use readmap3d::OccupancyMap3D;
+use rrt3d::RRTPlanner3D;
+use structs3d::Point3;
 
 fn main() {
+    let depth = 20;
+    let dz = 1.0;
 
-    let map = OccupancyMap::new("data/map.jpg"); // Lê o mapa
+    let map3d = OccupancyMap3D::replicate_from("data/map.jpg", depth, dz);
 
-    let start_point = Point { x: 50.0, y: 50.0 }; // Exemplo
-    let goal_point = Point { x: 700.0, y: 500.0 }; // Exemplo
-    let step_size = 15.0; // 15 pixels por passo
-    let goal_radius = 10.0; // Considera o objetivo alcançado se estiver a 10 pixels de distância
-    let max_iterations = 10000;
-    let num_collision_check_steps = 10; // Pontos para verificação entre q_nearst e q_new
+    let start = Point3 { x: 50.0,  y: 50.0,  z: 0.0};
+    let goal  = Point3 { x: 700.0, y: 500.0, z: (depth as f64 - 1.0) * dz };
 
-    let mut planner = RRTPlanner::new( start_point, goal_point, map, step_size, goal_radius, max_iterations, num_collision_check_steps);
+    let step_size   = 15.0;
+    let goal_radius = 10.0;
 
-    println!("Iniciando planejamento RRT...");
-    if let Some(path) = planner.RRT() {
-        println!("\nCaminho encontrado com {} pontos:", path.len());
-        for point in path {
-            println!("  ({:.2}, {:.2})", point.x, point.y); 
+    let mut planner = RRTPlanner3D::new(start, goal, map3d, step_size, goal_radius).with_goal_bias(0.05).with_max_iter(20_000).with_collision_steps(20);
+
+    match planner.plan() {
+        Some(path) => {
+            println!("Caminho 3D encontrado! Tamanho: {}", path.len());
+            let _ = planner.save_nodes_to_csv("data/rrt_nodes_3d.csv");
+            let _ = planner.save_path_to_csv("data/rrt_path_3d.csv");
         }
-        if let Err(e) = planner.save_all_nodes_to_csv("data/rrt_nodes.csv") {
-            eprintln!("Erro ao salvar nós: {}", e);
-        } else {
-            println!("Nós da árvore salvos em rrt_nodes.csv");
+        None => {
+            println!("Não foi possível encontrar caminho em 3D.");
         }
-
-        if let Err(e) = planner.save_final_path_to_csv("data/rrt_path.csv") {
-            eprintln!("Erro ao salvar caminho: {}", e);
-        } else {
-            println!("Caminho final salvo em rrt_path.csv");
-        }
-
-    } else {
-        println!("Não foi possível encontrar um caminho.");
     }
 }
