@@ -13,9 +13,9 @@ l1 = 123.06 / 1000.0
 l2 = 238.71 / 1000.0
 l3 = 280.15 / 1000.0
 
-MAX_ITER = 10000 
-STEP_SIZE = 0.1 
-GOAL_THRESHOLD = 0.05 
+MAX_ITER = 100000 
+STEP_SIZE = 0.04
+GOAL_THRESHOLD = 0.06
 JOINT_LIMITS = [
     (-np.pi, np.pi),
     (-np.pi/2, np.pi/2),
@@ -27,23 +27,30 @@ OBSTACLES_LIST = [
     {
         'type': 'cylinder',
         'name': 'Cilindro',
-        'x': -0.07, 'y': 0.17, 'z': 0.0, 
+        'x': 0.17, 'y': 0.07, 'z': 0.0, 
         'r': 0.025,
         'h': 0.245
     },
     {
         'type': 'box',
         'name': 'Paralelepipedo',
-        'x': -0.037, 'y': 0.23, 'z': 0.0,
-        'size_x': 0.23, 
-        'size_y': 0.06, 
+        'x': 0.23, 'y': 0.037, 'z': 0.0,
+        'size_x': 0.06, 
+        'size_y': 0.23, 
         'size_z': 0.045
     }
 ]
 
 ser = None
 
-def fkine(angulos):
+def return_to_home():
+    print("Retornando para a posição inicial (Home)...")
+    # Define a configuração zero (radianos)
+    home_q = [0, 0, 0, math.degrees(np.pi)]
+    send_to_robot(home_q)
+    time.sleep(3) # Tempo suficiente para o movimento físico terminar
+
+def fkine_hand(angulos):
     th1 = angulos[0]
     th2 = -angulos[1] + (np.pi / 2.0) - 0.12601
     th3 = -angulos[2] + 0.12601
@@ -53,6 +60,16 @@ def fkine(angulos):
     x = r*np.cos(th1)
     y = r*np.sin(th1)
     
+    return np.array([x, y, z])
+
+def fkine_elbow(angulos):
+    th1 = angulos[0]
+    th2 = angulos[1]
+
+    r = l2*np.cos(th2)
+    z = l1 + l2*np.sin(th2)
+    x = r*np.sin(th1)
+    y = r*np.cos(th1)
     return np.array([x, y, z])
 
 class Node:
@@ -97,31 +114,45 @@ class RRT:
             new_q = q_rand
         return Node(new_q)
 
-    def check_collision(self, q):
-        tip_pos = fkine(q)
-        tx, ty, tz = tip_pos[0], tip_pos[1], tip_pos[2]
-     
-        if tz < 0.0: 
+        #return Node(q_rand)
+
+    def is_point_colliding(self, pos):
+        px, py, pz = pos[0], pos[1], pos[2]
+        if pz < 0.0: 
             return True
 
         for obs in OBSTACLES_LIST:
             ox, oy = obs['x'], obs['y']
             
             if obs['type'] == 'cylinder':
-                dist_xy = math.sqrt((tx - ox)**2 + (ty - oy)**2)
-                if dist_xy < obs['r'] and tz < obs['h']:
+                dist_xy = math.sqrt((px - ox)**2 + (py - oy)**2)
+                if dist_xy < obs['r'] and pz < obs['h']:
                     return True
 
             elif obs['type'] == 'box':
-                half_x = obs['size_x'] / 2.0
-                half_y = obs['size_y'] / 2.0
-                max_z = obs['size_z']
-
-                x_min, x_max = ox - half_x, ox + half_x
-                y_min, y_max = oy - half_y, oy + half_y
-                
-                if (x_min < tx < x_max) and (y_min < ty < y_max) and (tz < max_z):
+                half_x, half_y = obs['size_x'] / 2.0, obs['size_y'] / 2.0
+                if (ox - half_x < px < ox + half_x) and \
+                (oy - half_y < py < oy + half_y) and \
+                (pz < obs['size_z']):
                     return True
+        return False
+
+    def check_collision(self, q):
+        base_pos = np.array([0, 0, 0])
+        elbow_pos = fkine_elbow(q)
+        hand_pos = fkine_hand(q)
+        steps = 10 
+
+        for t in range(steps + 1):
+            ratio = t / float(steps)
+            p_inter = (1 - ratio) * base_pos + ratio * elbow_pos
+            if self.is_point_colliding(p_inter):
+                return True
+        for t in range(steps + 1):
+            ratio = t / float(steps)
+            p_inter = (1 - ratio) * elbow_pos + ratio * hand_pos
+            if self.is_point_colliding(p_inter):
+                return True
 
         return False
         
@@ -135,7 +166,6 @@ class RRT:
         return True
         
     def planning(self):
-        print(f"--- RRT Iniciado ---")
         print(f"Meta XYZ: {self.goal_xyz}")
         
         # Checagem inicial
@@ -143,21 +173,44 @@ class RRT:
             print("ERRO CRÍTICO: Robô nasce dentro de um obstáculo ou no chão!")
             return None
 
+        curr_closest_node = None
+        curr_closest_node_dist = 9999999999999999999
+
         for i in range(MAX_ITER):
+            flag = 0
             if i % 1000 == 0:
                 print(f"Iteração {i} | Nós: {len(self.nodes)}")
 
             q_rand = self.get_random_config()
             nearest = self.get_nearest_node(q_rand)
+            prob = random.randint(0,100)
+            if prob < 50:
+                flag = 1
+                if curr_closest_node:
+                    nearest = curr_closest_node
             new_node = self.steer(nearest, q_rand)
             
             if not self.check_collision(new_node.q):
                 if self.has_edge(nearest.q, new_node.q):
                     new_node.parent = nearest
                     self.nodes.append(new_node)
-                    current_xyz = fkine(new_node.q)
+                    current_xyz = fkine_hand(new_node.q)
                     dist = np.linalg.norm(current_xyz - self.goal_xyz)
                     
+                    # ---------
+                    # DEBUG
+                    if dist < curr_closest_node_dist:
+                        curr_closest_node = new_node
+                        curr_closest_node_dist = dist
+                        # DEBUG
+                        if flag == 1:
+                            print("foi por troca")
+                        print(new_node.q)
+                        print(current_xyz)
+                        print(dist)
+                        print('-------')
+                    # -------
+
                     if dist < GOAL_THRESHOLD:
                         print(f"SUCESSO! Caminho encontrado na iteração {i}.")
                         print(f"Posição Final Atingida: {current_xyz}")
@@ -176,36 +229,34 @@ def read_serial():
             break
 
 def send_to_robot(q_rads):
-    # Converte radianos -> graus
     b = math.degrees(q_rads[0])
     s = math.degrees(q_rads[1])
     e = math.degrees(q_rads[2])
-    
-    # JSON comando
+    h = math.degrees(np.pi)
     cmd = {
-        "T": 102,
-        "base": round(b, 2),
-        "shoulder": round(s, 2),
-        "elbow": round(e, 2),
-        "hand": 90, 
-        "spd": 0,
-        "acc": 0
+        "T": 122,
+        "b": round(b, 2),
+        "s": round(s, 2),
+        "e": round(e, 2),
+        "h": round(h, 2), 
+        "spd": 50,
+        "acc": 10
     }
+    
     msg = json.dumps(cmd) + "\n"
-    ser.write(msg.encode())
+    print(f"Enviando: {msg.strip()}")
+    ser.write(msg.encode('utf-8'))
 
 
 def main():
     global ser
     parser = argparse.ArgumentParser(description='RRT RoArm Control')
     parser.add_argument('port', type=str, help='Porta COM')
-    parser.add_argument('--x', type=float, default=-0.20, help='Alvo X (m)')
-    parser.add_argument('--y', type=float, default=0.23, help='Alvo Y (m)')
-    parser.add_argument('--z', type=float, default=0.03, help='Alvo Z (m)')
+    parser.add_argument('--x', type=float, default=0.30, help='Alvo X (m)')
+    parser.add_argument('--y', type=float, default=0.25, help='Alvo Y (m)')
+    parser.add_argument('--z', type=float, default=0.15, help='Alvo Z (m)')
     
     args = parser.parse_args()
-    
-    print("=== Configuração do Cenário ===")
     print(f"Alvo: X={args.x:.3f}, Y={args.y:.3f}, Z={args.z:.3f}")
 
     # Define inicio (zeros) e fim
@@ -216,11 +267,10 @@ def main():
     planner = RRT(start_q, goal_xyz)
     path = planner.planning()
     
-    # --- USO DO SYS PARA ERRO DE PLANEJAMENTO ---
     if path is None:
         print("\n[ERRO CRÍTICO] O RRT não conseguiu encontrar um caminho válido.")
         print("Verifique se o alvo está dentro de um obstáculo ou fora de alcance.")
-        sys.exit(1) # Sai do programa indicando erro
+        sys.exit(1) 
 
     # Executa
     try:
@@ -231,10 +281,19 @@ def main():
         t.daemon = True
         t.start()
         time.sleep(2)
+        return_to_home()
         for i, q in enumerate(path):
             send_to_robot(q)
-            time.sleep(0.2) 
+            print(q)
+            print(fkine_hand(q))
+            print('-----------')
+            #time.sleep(5) 
+
+        print("Alvo atingido. Aguardando no destino...")
         time.sleep(2)
+
+        return_to_home()
+
         sys.exit(0)
 
     except serial.SerialException as e:
